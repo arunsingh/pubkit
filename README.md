@@ -179,6 +179,28 @@ ghost = "my_pubkit_ghost:GhostAdapter"
 Five extension points, all first-class: `pubkit.adapters`, `pubkit.renderers`,
 `pubkit.checks`, `pubkit.hooks`, and per-platform `transforms:` in config.
 
+## Install it however you like
+
+```bash
+pip install "pubkit[all]"                       # the normal way
+pipx install "pubkit[all]"                      # isolated CLI
+uv tool install "pubkit[all]"                   # same, faster
+docker run --rm -v "$PWD:/work" ghcr.io/arunsingh/pubkit validate content/
+```
+
+The Docker image ships Chromium and its system libraries, which is the part
+nobody wants to install on a CI runner by hand.
+
+As a GitHub Action, no install step at all:
+
+```yaml
+- uses: arunsingh/pubkit@v1
+  with:
+    command: plan
+    path: content/
+    platforms: medium,devto
+```
+
 ## Fit it into a workflow
 
 **GitHub Actions** — plan on every PR, publish on merge:

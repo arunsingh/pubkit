@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+title: "pubkit: publish one source to many platforms, safely"
+message: If you use this software, please cite it.
+type: software
+authors:
+  - family-names: Singh
+    given-names: Arun
+repository-code: https://github.com/arunsingh/pubkit
+license: Apache-2.0
+version: 0.1.0
+date-released: 2026-09-11
+keywords: [publishing, automation, content, browser-automation, python]
+abstract: >-
+  A publishing pipeline that treats cross-platform publishing as a distributed
+  systems problem: an unreliable channel, a stateful remote you do not control,
+  and a non-idempotent operation. Provides a canonical document IR, capability
+  negotiation with explicit degradations, hash-verified transport, reload-based
+  verification, and a resumable idempotent runner. Adapters for Medium,
+  Substack, X, Dev.to and Hashnode.

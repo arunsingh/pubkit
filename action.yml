@@ -1,0 +1,68 @@
+name: pubkit
+description: Validate, plan and publish Markdown to Medium, Substack, X, Dev.to and Hashnode.
+author: Arun Singh
+branding: {icon: upload-cloud, color: blue}
+
+inputs:
+  command:
+    description: 'validate | plan | publish'
+    required: true
+    default: validate
+  path:
+    description: Content file or directory
+    required: true
+    default: content/
+  platforms:
+    description: Comma-separated platforms (not used by `validate`)
+    required: false
+    default: ''
+  confirm:
+    description: 'Actually publish. Anything other than "true" leaves drafts alone.'
+    required: false
+    default: 'false'
+  strict:
+    description: Treat warnings as errors (validate only)
+    required: false
+    default: 'false'
+  version:
+    description: pubkit version to install
+    required: false
+    default: ''
+
+outputs:
+  summary:
+    description: Human-readable result, also written to the job summary
+    value: ${{ steps.run.outputs.summary }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with: {python-version: '3.12'}
+    - shell: bash
+      run: pip install "pubkit[all]${{ inputs.version && format('=={0}', inputs.version) || '' }}"
+    - id: run
+      shell: bash
+      run: |
+        set -o pipefail
+        ARGS=()
+        case "${{ inputs.command }}" in
+          validate) ARGS=(validate "${{ inputs.path }}") ;;
+          plan)     ARGS=(plan "${{ inputs.path }}" --to "${{ inputs.platforms }}") ;;
+          publish)  ARGS=(publish "${{ inputs.path }}" --to "${{ inputs.platforms }}") ;;
+          *) echo "unknown command: ${{ inputs.command }}" >&2; exit 2 ;;
+        esac
+        [ "${{ inputs.strict }}" = "true" ] && ARGS+=(--strict)
+        [ "${{ inputs.confirm }}" = "true" ] && ARGS+=(--confirm)
+        pubkit "${ARGS[@]}" | tee /tmp/pubkit.out
+        {
+          echo "summary<<PUBKIT_EOF"
+          cat /tmp/pubkit.out
+          echo "PUBKIT_EOF"
+        } >> "$GITHUB_OUTPUT"
+        {
+          echo "## pubkit ${{ inputs.command }}"
+          echo '```'
+          cat /tmp/pubkit.out
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
