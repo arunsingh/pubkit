@@ -64,6 +64,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with: {name: dist, path: dist/}
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # A version already on PyPI becomes a no-op instead of a red
+          # build. Tag names and package versions drift; a re-tag or a
+          # re-run should not fail the release for that alone.
+          skip-existing: true
 
   github-release:
     needs: publish
