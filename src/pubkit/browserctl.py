@@ -132,6 +132,19 @@ async def attached(adapters: Sequence, sessions: SessionStore, *, headless: bool
         yield list(adapters)
         return
 
+    # Check every session BEFORE a browser exists. A missing login is the most
+    # common reason a publish cannot start, and spending a Chromium launch to
+    # then say "run pubkit auth login" is both slow and the wrong order — it
+    # also leaves a browser process to clean up on the failure path.
+    missing = [a.name for a in needs_browser if sessions.load(a.name) is None]
+    if missing:
+        raise CredentialError(
+            "no saved session for: " + ", ".join(missing) + ".\n"
+            + "\n".join(f"  Run:  pubkit auth login {p}" for p in missing)
+            + "\n  A browser window opens, you sign in yourself, and pubkit keeps\n"
+            "  only the session — it never asks for your password."
+        )
+
     async with BrowserPool(sessions, headless=headless) as pool:
         for adapter in needs_browser:
             page, upload = await pool.page_for(adapter.name)

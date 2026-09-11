@@ -442,6 +442,7 @@ def test_doctor_honours_playwright_browsers_path(tmp_path, monkeypatch):
 # ------------------------------------------------- table rendering + assets
 def test_tables_become_figures_on_a_platform_without_tables(tmp_path):
     """Medium has no tables. The planner says so; this is what acts on it."""
+    pytest.importorskip("PIL", reason="table rendering needs the [render] extra")
     from pubkit.core.assets import materialise
 
     doc = _doc(
@@ -475,6 +476,7 @@ def test_tables_are_left_alone_where_they_are_supported(tmp_path):
 
 def test_rendered_tables_are_cached_between_runs(tmp_path):
     """A re-run must not re-render or re-upload an unchanged table."""
+    pytest.importorskip("PIL", reason="table rendering needs the [render] extra")
     from pubkit.core.assets import materialise
 
     doc = _doc(blocks=[Table(header=["a"], rows=[["1"]])])
@@ -499,6 +501,7 @@ def test_changing_a_cell_changes_the_asset_id(tmp_path):
 
 def test_rendered_table_png_is_small_and_readable(tmp_path):
     """Upload time is the slowest step of a browser publish."""
+    pytest.importorskip("PIL", reason="table rendering needs the [render] extra")
     from PIL import Image
 
     from pubkit.render.tables import render_table
