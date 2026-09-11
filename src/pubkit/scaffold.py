@@ -212,14 +212,34 @@ def diagnose() -> list[Finding]:
     )
 
     if _has("playwright"):
-        from pathlib import Path as _P
-
-        cache = _P.home() / (
-            "Library/Caches/ms-playwright" if platform.system() == "Darwin" else ".cache/ms-playwright"
-        )
-        found = cache.exists() and any(cache.glob("chromium*"))
+        # Honour PLAYWRIGHT_BROWSERS_PATH. Managed images (CI runners, devcontainers,
+        # the Playwright Docker image) put browsers somewhere else entirely, and
+        # reporting "not downloaded" when they are right there sends people off to
+        # fix a problem they do not have.
+        override = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+        if override and override != "0":
+            roots = [Path(override)]
+            where = override
+        else:
+            roots = [
+                Path.home()
+                / (
+                    "Library/Caches/ms-playwright"
+                    if platform.system() == "Darwin"
+                    else "AppData/Local/ms-playwright"
+                    if platform.system() == "Windows"
+                    else ".cache/ms-playwright"
+                )
+            ]
+            where = "the default cache"
+        found = [d for r in roots if r.exists() for d in r.glob("chromium*")]
         out.append(
-            Finding(found, "chromium", "downloaded" if found else "not downloaded", "playwright install chromium")
+            Finding(
+                bool(found),
+                "chromium",
+                f"{len(found)} build(s) in {where}" if found else f"none in {where}",
+                "playwright install chromium",
+            )
         )
 
     out.append(

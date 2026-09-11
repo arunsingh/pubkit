@@ -421,3 +421,19 @@ async def test_transient_errors_are_retried():
 
     assert await with_retry(fn, attempts=4, base=0.001) == "ok"
     assert calls == 3
+
+
+def test_doctor_honours_playwright_browsers_path(tmp_path, monkeypatch):
+    """Managed images put browsers outside the default cache.
+
+    Reporting "not downloaded" when Chromium is sitting right there sends
+    someone off to fix a problem they do not have.
+    """
+    from pubkit.scaffold import diagnose
+
+    (tmp_path / "chromium-1194").mkdir()
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
+    findings = {f.label: f for f in diagnose()}
+    if "chromium" in findings:                  # only present when playwright is installed
+        assert findings["chromium"].ok
+        assert str(tmp_path) in findings["chromium"].detail

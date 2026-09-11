@@ -4,6 +4,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning is [semantic](https://semver.org/); adapters may change behaviour on
 a minor bump when a platform changes underneath them.
 
+## [0.1.1] — 2026-09-11
+
+### Added
+
+- Docker image on the Playwright base (`ghcr.io/arunsingh/pubkit`), so browser
+  adapters work in CI without hand-installing Chromium's system libraries.
+- `action.yml` — the repository is now a reusable GitHub Action.
+- `CITATION.cff`, and a Homebrew formula template under `packaging/`.
+
+### Fixed
+
+- `pubkit doctor` ignored `PLAYWRIGHT_BROWSERS_PATH` and reported Chromium as
+  missing on managed images (CI runners, devcontainers, the Playwright Docker
+  image) where it was in fact installed — sending people off to fix a problem
+  they did not have. Found by running the published package in exactly such an
+  environment.
+
 ## [0.1.0] — 2026-09-11
 
 First release. Extracted from a real, painful publishing run: a 15,000-word
