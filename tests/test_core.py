@@ -437,3 +437,113 @@ def test_doctor_honours_playwright_browsers_path(tmp_path, monkeypatch):
     if "chromium" in findings:                  # only present when playwright is installed
         assert findings["chromium"].ok
         assert str(tmp_path) in findings["chromium"].detail
+
+
+# ------------------------------------------------- table rendering + assets
+def test_tables_become_figures_on_a_platform_without_tables(tmp_path):
+    """Medium has no tables. The planner says so; this is what acts on it."""
+    from pubkit.core.assets import materialise
+
+    doc = _doc(
+        blocks=[
+            Paragraph(text="before"),
+            Table(header=["Model", "Size"], rows=[["70B", "140 GB"]], caption="What weights cost"),
+            Paragraph(text="after"),
+        ]
+    )
+    caps = Capabilities(tables=False, image_upload="browser_paste")
+    out = materialise(doc, caps, tmp_path)
+
+    kinds = [b.type.value for b in out.blocks]
+    assert kinds == ["paragraph", "figure", "paragraph"]
+    fig = out.figures[0]
+    assert fig.caption == "What weights cost"
+    asset = out.assets[fig.asset_id]
+    assert asset.path.exists() and asset.path.stat().st_size > 500
+    assert asset.generated_from == "table[1]"
+    # The source document must be untouched — it still has to serve Dev.to.
+    assert [b.type.value for b in doc.blocks] == ["paragraph", "table", "paragraph"]
+
+
+def test_tables_are_left_alone_where_they_are_supported(tmp_path):
+    from pubkit.core.assets import materialise
+
+    doc = _doc(blocks=[Table(header=["a"], rows=[["1"]])])
+    out = materialise(doc, Capabilities(tables=True), tmp_path)
+    assert out is doc
+
+
+def test_rendered_tables_are_cached_between_runs(tmp_path):
+    """A re-run must not re-render or re-upload an unchanged table."""
+    from pubkit.core.assets import materialise
+
+    doc = _doc(blocks=[Table(header=["a"], rows=[["1"]])])
+    caps = Capabilities(tables=False, image_upload="browser_paste")
+    first = materialise(doc, caps, tmp_path)
+    path = first.assets[first.figures[0].asset_id].path
+    mtime = path.stat().st_mtime_ns
+
+    second = materialise(doc, caps, tmp_path)
+    assert second.assets[second.figures[0].asset_id].path == path
+    assert path.stat().st_mtime_ns == mtime       # not re-rendered
+
+
+def test_changing_a_cell_changes_the_asset_id(tmp_path):
+    from pubkit.render.tables import table_asset_id
+
+    a = Table(header=["a"], rows=[["1"]])
+    b = Table(header=["a"], rows=[["2"]])
+    assert table_asset_id(a, 1) != table_asset_id(b, 1)
+    assert table_asset_id(a, 1) == table_asset_id(Table(header=["a"], rows=[["1"]]), 1)
+
+
+def test_rendered_table_png_is_small_and_readable(tmp_path):
+    """Upload time is the slowest step of a browser publish."""
+    from PIL import Image
+
+    from pubkit.render.tables import render_table
+
+    t = Table(
+        header=["Platform", "Tables", "Images", "Notes"],
+        rows=[
+            ["Medium", "no", "browser paste", "remote URLs are stripped"],
+            ["Dev.to", "yes", "api", "native fidelity"],
+            ["X", "no", "api", "280 chars, threads"],
+        ],
+        align=["l", "c", "l", "l"],
+        caption="What each platform can actually do",
+    )
+    out = render_table(t, tmp_path / "t.png")
+    im = Image.open(out)
+    assert im.width == 1400                      # 700 CSS px at 2x
+    assert im.height > 100
+    assert out.stat().st_size < 60_000
+
+
+# ---------------------------------------------------- browser attachment
+async def test_attached_is_a_noop_for_api_only_runs():
+    """Publishing to Dev.to must not pay for launching Chromium."""
+    from pubkit.browserctl import attached
+    from pubkit.core.auth import SessionStore
+
+    devto = build_adapter_safe("devto")
+    async with attached([devto], SessionStore()) as ready:
+        assert ready == [devto]
+
+
+async def test_attached_demands_a_session_before_touching_a_browser(tmp_path):
+    """The error must name the exact command, not just fail."""
+    from pubkit.browserctl import attached
+    from pubkit.core.auth import CredentialError, SessionStore
+
+    sessions = SessionStore(dir=tmp_path / "sessions")
+    medium = build_adapter_safe("medium")
+    with pytest.raises(CredentialError, match="pubkit auth login medium"):
+        async with attached([medium], sessions):
+            pass
+
+
+def build_adapter_safe(name):
+    from pubkit.registry import build_adapter
+
+    return build_adapter(name)

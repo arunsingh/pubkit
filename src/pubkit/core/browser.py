@@ -221,7 +221,7 @@ class BrowserAdapter(BaseAdapter):
 
     selectors: EditorSelectors
     login_url: str = ""
-    marker_regex: str = r"\\[\\[\\s*IMAGE"
+    marker_regex: str = r"\[\[\s*IMAGE"   # a JS RegExp source string, not a Python pattern
 
     def __init__(self) -> None:
         super().__init__()

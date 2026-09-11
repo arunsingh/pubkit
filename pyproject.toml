@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pubkit"
-version = "0.1.1"
+version = "0.2.0"
 description = "Publish one source to many platforms, safely. Medium, Substack, X, Dev.to, Hashnode."
 readme = "README.md"
 requires-python = ">=3.11"

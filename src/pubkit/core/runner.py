@@ -8,8 +8,10 @@ import logging
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from .adapter import Adapter, Context, PublishedRef, VerificationFailed, with_retry
+from .assets import materialise
 from .auth import CredentialError
 from .capabilities import PublishPlan
 from .capabilities import plan as make_plan
@@ -130,6 +132,11 @@ class Pipeline:
         rec = self.state.remote(did, pf)
         if rec:
             ctx.options["remote_ref"] = rec.remote_ref
+
+        # Adapt the document to this platform: on Medium a table becomes a
+        # rendered figure, on Dev.to it stays a table. The source IR is never
+        # mutated — the same document has to serve every leg of this run.
+        doc = materialise(doc, adapter.capabilities, Path(ctx.workdir))
 
         try:
             order = Step.order()

@@ -1,0 +1,119 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Fake editor</title>
+<!--
+  A deliberately faithful stand-in for Medium's editor, built to reproduce the
+  behaviours that actually broke things — not to look like Medium.
+
+  Specifically it reproduces:
+    * MULTIPLE .section-inner roots. An adapter that selects only the first one
+      replaces 2 paragraphs and appends the rest, which is failure B1.
+    * A paste handler that STRIPS every <img>, <picture> and srcset out of
+      pasted HTML, exactly as Medium does (failure B5).
+    * Images accepted ONLY as a real File on a ClipboardEvent's DataTransfer,
+      inserted BEFORE the caret's paragraph (failures B6, B7).
+    * An upload that goes through a blob: URL first and only later resolves to
+      a "CDN" URL, so an adapter that does not wait ships a broken image.
+-->
+<style>
+  body { font: 16px/1.6 system-ui, sans-serif; margin: 2rem auto; max-width: 44rem; }
+  .graf { margin: 0 0 1rem; }
+  figure { margin: 1.5rem 0; }
+  figure img { max-width: 100%; }
+  figcaption { color: #6b6b6b; font-size: .875rem; }
+</style>
+
+<div class="postArticle-content" contenteditable="true">
+  <div class="section-inner">
+    <h3 class="graf">Untitled</h3>
+    <p class="graf">Start writing…</p>
+  </div>
+  <div class="section-inner">
+    <p class="graf">A second section root. Miss this and your paste appends.</p>
+  </div>
+</div>
+
+<script>
+const ed = document.querySelector('.postArticle-content');
+
+// Medium strips images out of pasted HTML. Every single one.
+function stripImages(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  doc.querySelectorAll('img, picture, source, svg').forEach(n => n.remove());
+  return doc.body.innerHTML;
+}
+
+function normalise(root) {
+  // Anything the paste produced becomes a .graf, the way the real editor
+  // normalises pasted markup into its own block model.
+  root.querySelectorAll(':scope > *').forEach(el => {
+    if (!el.classList.contains('graf') && el.tagName !== 'FIGURE') el.classList.add('graf');
+  });
+}
+
+ed.addEventListener('paste', ev => {
+  ev.preventDefault();
+  const dt = ev.clipboardData;
+
+  // --- a real File: run "our uploader" and insert a figure -----------------
+  const file = dt && dt.files && dt.files[0];
+  if (file && file.type.startsWith('image/')) {
+    const sel = getSelection();
+    if (!sel.rangeCount) return;
+    let node = sel.anchorNode;
+    while (node && node.nodeType !== 1) node = node.parentNode;
+    while (node && !node.classList.contains('graf')) node = node.parentElement;
+    if (!node) return;
+
+    const fig = document.createElement('figure');
+    fig.className = 'graf graf--figure';
+    const img = document.createElement('img');
+    img.src = URL.createObjectURL(file);        // blob: first, like the real thing
+    const cap = document.createElement('figcaption');
+    cap.textContent = 'Type caption for image (optional)';
+    fig.append(img, cap);
+
+    // The figure lands BEFORE the caret's paragraph. This is why captions make
+    // the right anchors.
+    node.parentElement.insertBefore(fig, node);
+
+    // The "upload" resolves to a CDN URL only after a delay. An adapter that
+    // does not wait for this ships a post full of dead blob: links.
+    setTimeout(() => {
+      const h = Math.random().toString(36).slice(2, 10);
+      img.src = `https://cdn.example.test/max/1600/1*${h}.png`;
+      img.setAttribute('data-image-id', `1*${h}.png`);
+    }, 700);
+    return;
+  }
+
+  // --- HTML: strip images, then replace the selection ----------------------
+  const html = dt ? dt.getData('text/html') : '';
+  if (!html) return;
+  const sel = getSelection();
+  if (sel.rangeCount) {
+    const range = sel.getRangeAt(0);
+    range.deleteContents();
+    const frag = range.createContextualFragment(stripImages(html));
+    range.insertNode(frag);
+  }
+  // A real editor normalises after a paste and never loses its own
+  // scaffolding — that is precisely why pubkit must replace by pasting over a
+  // selection rather than deleting everything first (failure B2). Anything
+  // that ended up as a direct child of the editor gets rehomed into a section.
+  let root = document.querySelector('.section-inner');
+  if (!root) {
+    root = document.createElement('div');
+    root.className = 'section-inner';
+    ed.appendChild(root);
+  }
+  [...ed.children].forEach(child => {
+    if (!child.classList.contains('section-inner')) root.appendChild(child);
+  });
+  document.querySelectorAll('.section-inner').forEach(normalise);
+  // Empty trailing roots are collapsed, as the real editor does after a
+  // full-document replace.
+  [...document.querySelectorAll('.section-inner')].slice(1)
+    .forEach(r => { if (!r.querySelector('.graf, figure')) r.remove(); });
+});
+</script>

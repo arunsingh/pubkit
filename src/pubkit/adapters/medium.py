@@ -68,7 +68,7 @@ class MediumAdapter(BrowserAdapter):
 
     login_url = "https://medium.com/m/signin"
     new_story_url = "https://medium.com/new-story"
-    marker_regex = r"\\[\\[\\s*IMAGE"
+    marker_regex = r"\[\[\s*IMAGE"
 
     def __init__(self, page=None, upload=None) -> None:
         super().__init__()

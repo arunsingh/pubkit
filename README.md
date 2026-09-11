@@ -59,9 +59,10 @@ pubkit validate content/series/
 # 2. See exactly what each platform will get — including every degradation.
 pubkit plan content/series/ --to medium,devto,x
 
-# 3. Sign in. pubkit never accepts a password.
-pubkit auth login medium        # opens a window; you sign in; it keeps the session
+# 3. Sign in, once. pubkit never accepts a password.
+pubkit auth login medium        # a window opens; you sign in; it keeps the session
 pubkit auth login devto         # API token → OS keychain
+pubkit auth verify medium       # confirm before a publish depends on it
 
 # 4. Drafts everywhere. Safe to re-run; a dropped connection costs one step.
 pubkit publish content/series/ --to medium,devto,x
@@ -87,6 +88,31 @@ x: part-1 (bf9abfe78ce4)
 ```
 
 Nothing is a surprise at publish time. That is the whole design goal.
+
+## Sign in once, then it runs on its own
+
+```bash
+pubkit auth login medium
+```
+
+A real browser window opens at Medium's login page. You sign in — password
+manager, MFA, device confirmation, whatever it asks for. pubkit watches for the
+post-login URL, saves the session encrypted, and closes the window.
+
+From then on, unattended:
+
+```bash
+pubkit publish content/ --to medium,devto,x --confirm
+```
+
+One browser serves the whole run, one context per platform so a Medium session
+is never presented to Substack, and sessions refresh on the way out because
+cookies rotate. Publishing only to API platforms never launches Chromium at all.
+
+pubkit sees cookies. It never sees, types or stores a password — which is both
+the right security posture and the only thing that works, since platforms
+increasingly gate login behind challenges an automation layer has no business
+trying to defeat.
 
 ## Write once
 

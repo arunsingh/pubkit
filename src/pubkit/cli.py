@@ -147,11 +147,17 @@ def publish(
         )
 
     pipe = Pipeline(StateStore())
+    live = confirm and not draft_only
 
     async def go():
-        if hasattr(target, "documents"):
-            return await pipe.run_series(target, adapters, ctx_for, publish=confirm and not draft_only)
-        return await pipe.run([target], adapters, ctx_for, publish=confirm and not draft_only)
+        # Browser adapters get a live page here and nowhere else. API-only runs
+        # never launch Chromium.
+        from .browserctl import attached
+
+        async with attached(adapters, sessions, headless=headless) as ready:
+            if hasattr(target, "documents"):
+                return await pipe.run_series(target, ready, ctx_for, publish=live)
+            return await pipe.run([target], ready, ctx_for, publish=live)
 
     report = asyncio.run(go())
     console.print(f"\n[bold]{report.run_id}[/]")
@@ -254,10 +260,12 @@ def auth_login(
     Browser platforms: a real browser window opens and you sign in yourself —
     pubkit stores only the resulting session, never a password.
     """
-    tokens = TokenStore()
-    adapter = build_adapter(platform)
+    from .browserctl import BROWSER_PLATFORMS
 
-    if adapter.capabilities.image_upload != "browser_paste" and adapter.name not in ("substack",):
+    tokens = TokenStore()
+    build_adapter(platform)  # fail fast on an unknown platform
+
+    if platform not in BROWSER_PLATFORMS:
         if token is None:
             token = typer.prompt(f"{platform} API token", hide_input=True)
         tokens.set(platform, token.strip())
@@ -266,12 +274,15 @@ def auth_login(
 
     from .browserctl import interactive_login
 
+    try:
+        asyncio.run(interactive_login(platform, SessionStore()))
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(1) from exc
     console.print(
-        f"Opening a browser window for {platform}. Sign in there — including MFA — "
-        "and pubkit will save the session when it sees you are logged in."
+        f"[green]saved {platform} session (encrypted)[/]\n"
+        f"Verify any time with: pubkit auth verify {platform}"
     )
-    asyncio.run(interactive_login(platform, SessionStore()))
-    console.print(f"[green]saved {platform} session (encrypted)[/]")
 
 
 @auth_app.command("logout")
@@ -279,6 +290,24 @@ def auth_logout(platform: str = typer.Argument(...)):
     TokenStore().delete(platform)
     SessionStore().forget(platform)
     console.print(f"[green]forgot all {platform} credentials[/]")
+
+
+@auth_app.command("verify")
+def auth_verify(platform: str = typer.Argument(...)):
+    """Check a saved session is still valid — cheaper now than mid-publish."""
+    from .browserctl import BROWSER_PLATFORMS, verify_session
+
+    if platform not in BROWSER_PLATFORMS:
+        tok = TokenStore().get(platform) or TokenStore().get(platform, "bearer")
+        console.print(f"[green]{platform}: token present[/]" if tok else f"[red]{platform}: no token[/]")
+        raise typer.Exit(0 if tok else 1)
+
+    ok = asyncio.run(verify_session(platform, SessionStore()))
+    if ok:
+        console.print(f"[green]{platform}: session valid[/]")
+    else:
+        console.print(f"[red]{platform}: session missing or expired[/] — run `pubkit auth login {platform}`")
+    raise typer.Exit(0 if ok else 1)
 
 
 @auth_app.command("list")
