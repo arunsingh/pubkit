@@ -263,12 +263,16 @@ validate >> PubkitPublishOperator.expand_fanout(
 
 ## Status
 
-v0.1. The core, the checks, the planner and the state machine are tested (32
-tests) and exercised end-to-end against a real published series in
-`examples/inside-ai-infra/`. The browser adapters encode techniques verified by
-hand against live editors; selectors are the part most likely to need a patch
-when a platform ships a redesign, which is exactly why they are isolated in one
-dataclass per adapter.
+v0.2. The core, the checks, the planner, the state machine, the browser pool
+and the table renderer are covered by 49 tests, and the whole pipeline is
+exercised end-to-end against a real published series in
+`examples/inside-ai-infra/`. The browser adapters are additionally tested
+against a deliberately hostile fake editor — multiple content roots, images
+stripped from pasted HTML, figures landing above the caret, uploads that sit on
+a `blob:` URL — which is where two real bugs were caught before release.
+
+Selectors remain the part most likely to need a patch when a platform ships a
+redesign, which is exactly why they are isolated in one dataclass per adapter.
 
 ## Docs
 
