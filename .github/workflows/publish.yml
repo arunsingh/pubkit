@@ -13,8 +13,8 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: {python-version: "3.12"}
       - run: pip install "pubkit[all]"
       - run: pubkit validate content/ --strict
@@ -32,8 +32,8 @@ jobs:
     # real human gate. Publishing is public and hard to undo.
     environment: production
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: {python-version: "3.12"}
       - run: pip install "pubkit[all]" && playwright install --with-deps chromium
       - run: pubkit validate content/ --strict
@@ -42,6 +42,6 @@ jobs:
           PUBKIT_VAULT_KEY: ${{ secrets.PUBKIT_VAULT_KEY }}
           PUBKIT_DEVTO_TOKEN: ${{ secrets.DEVTO_TOKEN }}
           PUBKIT_X_BEARER: ${{ secrets.X_BEARER }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with: {name: pubkit-state, path: .pubkit/state.sqlite}

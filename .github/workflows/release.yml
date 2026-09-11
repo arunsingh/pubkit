@@ -30,8 +30,8 @@ jobs:
       matrix:
         python: ["3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: {python-version: "${{ matrix.python }}"}
       - run: pip install -e ".[dev,all]"
       - run: python -m playwright install chromium
@@ -43,7 +43,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The tag is the only thing a human types during a release, and it is
       # the one thing nothing else checks. v0.1.1 was cut before the version
@@ -63,13 +63,13 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: {python-version: "3.12"}
       - run: pip install build twine
       - run: python -m build
       - name: Check metadata renders on PyPI
         run: twine check --strict dist/*
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: {name: dist, path: dist/}
 
   publish:
@@ -81,7 +81,7 @@ jobs:
     permissions:
       id-token: write        # this is what Trusted Publishing needs
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: {name: dist, path: dist/}
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
@@ -96,8 +96,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with: {name: dist, path: dist/}
       - uses: softprops/action-gh-release@v2
         with:
