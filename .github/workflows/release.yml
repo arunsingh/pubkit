@@ -1,0 +1,81 @@
+name: release
+
+# Publishes to PyPI via Trusted Publishing (OIDC).
+#
+# This is deliberate, and it mirrors the philosophy of the tool itself: there is
+# no PyPI API token anywhere. GitHub proves the workflow's identity to PyPI
+# directly, so there is no long-lived secret to leak, rotate or accidentally
+# commit. Set it up once at https://pypi.org/manage/account/publishing/ with:
+#
+#     PyPI project name : pubkit
+#     Owner             : <your-github-username>
+#     Repository        : pubkit
+#     Workflow          : release.yml
+#     Environment       : pypi
+#
+# Then tag a release and this does the rest.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "${{ matrix.python }}"}
+      - run: pip install -e ".[dev]"
+      - run: ruff check src tests
+      - run: pytest -q
+      - run: python -m pubkit.cli validate examples/inside-ai-infra
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install build twine
+      - run: python -m build
+      - name: Check metadata renders on PyPI
+        run: twine check --strict dist/*
+      - uses: actions/upload-artifact@v4
+        with: {name: dist, path: dist/}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/pubkit
+    permissions:
+      id-token: write        # this is what Trusted Publishing needs
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {name: dist, path: dist/}
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: {name: dist, path: dist/}
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body_path: .github/release-body.md

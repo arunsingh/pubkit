@@ -1,0 +1,47 @@
+# Example workflow for a content repository using pubkit.
+# Copy this into your *content* repo, not into pubkit itself.
+name: publish
+on:
+  pull_request:
+    paths: ["content/**"]
+  push:
+    branches: [main]
+    paths: ["content/**"]
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install "pubkit[all]"
+      - run: pubkit validate content/ --strict
+      - name: Post the plan to the PR summary
+        run: |
+          echo '## Publishing plan' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          pubkit plan content/ --to medium,devto,x >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # A GitHub environment with a required reviewer turns --confirm into a
+    # real human gate. Publishing is public and hard to undo.
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install "pubkit[all]" && playwright install --with-deps chromium
+      - run: pubkit validate content/ --strict
+      - run: pubkit publish content/ --to medium,devto,x --confirm
+        env:
+          PUBKIT_VAULT_KEY: ${{ secrets.PUBKIT_VAULT_KEY }}
+          PUBKIT_DEVTO_TOKEN: ${{ secrets.DEVTO_TOKEN }}
+          PUBKIT_X_BEARER: ${{ secrets.X_BEARER }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: pubkit-state, path: .pubkit/state.sqlite}

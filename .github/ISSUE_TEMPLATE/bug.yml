@@ -1,0 +1,50 @@
+name: Bug report
+description: Something published wrong, or didn't publish at all.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Run `pubkit doctor` first — it answers most setup questions on its own.
+  - type: textarea
+    id: doctor
+    attributes:
+      label: pubkit doctor
+      description: Paste the full output. It is already redacted; it contains no tokens.
+      render: shell
+    validations: {required: true}
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [medium, substack, x, devto, hashnode, other/custom adapter]
+    validations: {required: true}
+  - type: dropdown
+    id: step
+    attributes:
+      label: Which step failed
+      description: The runner names it in the output.
+      options: [auth, draft, content, media, verify, publish, not sure]
+    validations: {required: true}
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: |
+        Be concrete about what the *published result* looked like versus what you expected.
+        "The images were in the wrong places" is more useful than "it broke".
+    validations: {required: true}
+  - type: textarea
+    id: log
+    attributes:
+      label: Output of the failing command with -v
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: "`pubkit validate` passes on the content"
+        - label: I re-ran the command — it is reproducible, not a dropped connection
+        - label: I have not pasted any token or password into this issue
+          required: true

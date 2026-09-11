@@ -1,0 +1,74 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pubkit"
+version = "0.1.0"
+description = "Publish one source to many platforms, safely. Medium, Substack, X, Dev.to, Hashnode."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Arun Singh" }]
+keywords = ["publishing", "medium", "substack", "twitter", "x", "devto", "hashnode", "automation", "content"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Text Processing :: Markup",
+  "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+  "Typing :: Typed",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "pydantic>=2.6",
+  "httpx>=0.27",
+  "typer>=0.12",
+  "rich>=13.7",
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+browser = ["playwright>=1.44"]
+keychain = ["keyring>=25.0", "cryptography>=42.0"]
+render = ["pillow>=10.0"]
+airflow = ["apache-airflow>=2.9"]
+all = ["pubkit[browser,keychain,render]"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.4", "mypy>=1.10"]
+
+[project.scripts]
+pubkit = "pubkit.cli:main"
+
+[project.entry-points."pubkit.adapters"]
+# Built-ins are registered in code; this group is for third-party adapters.
+
+[project.urls]
+Homepage = "https://github.com/arunsingh/pubkit"
+Issues = "https://github.com/arunsingh/pubkit/issues"
+Documentation = "https://github.com/arunsingh/pubkit#readme"
+Changelog = "https://github.com/arunsingh/pubkit/blob/main/CHANGELOG.md"
+"Failure modes" = "https://github.com/arunsingh/pubkit/blob/main/docs/FAILURE-MODES.md"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pubkit"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/src", "/tests", "/docs", "/examples", "/README.md", "/LICENSE", "/NOTICE", "/CHANGELOG.md"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4"]
+# UP042: str+Enum is deliberate — these values are serialised to JSON and SQLite.
+ignore = ["E501", "B008", "UP042"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# So a fresh clone runs `pytest` without needing `pip install -e .` first.
+pythonpath = ["src"]
