@@ -220,3 +220,72 @@ Publishing one document to five platforms is a fan-out where any leg can fail.
 > **pubkit:** per-platform token-bucket limiter, bounded exponential backoff
 > with jitter, and per-leg result reporting. One platform failing never blocks
 > the others; the run exits non-zero with a machine-readable summary.
+
+---
+
+## Class E — Sign-in
+
+A login is the only step a human performs and a machine has to judge, and every
+failure in it is silent. These six were all observed against live platforms.
+
+### E1. The submit button does nothing at all
+A sign-in page opens, the email is typed, Continue is clicked, and nothing
+happens. No error, no navigation, no network request, nothing in the console.
+It is the hardest login failure to report because from the outside there is
+nothing to report.
+
+> **pubkit:** the page is watched while the human works. Every POST/fetch to
+> the platform is counted, so "you did not finish" and "the button never fired"
+> stop being the same silence. Zero submissions after a timeout is reported as
+> a failure in its own right, with `--attach` as the next step.
+
+### E2. A bot check that never completes
+Identical symptom to E1, opposite cause: the click *is* handled, but the
+handler waits on a challenge script that a freshly launched browser profile
+never gets a token from. Indistinguishable by eye.
+
+> **pubkit:** requests to known challenge hosts (reCAPTCHA, hCaptcha, Arkose,
+> PerimeterX, DataDome, Turnstile) are recorded separately, and a failed one is
+> named in the diagnosis. The remedy is `pubkit auth login <platform> --attach`,
+> which watches a Chrome the user started themselves. pubkit does not attempt
+> to defeat a challenge; it gets out of the way of one.
+
+### E3. Waiting five minutes for something that could never happen
+playwright not installed, no browser downloaded, the login host unreachable
+behind a VPN or proxy, a session directory that is not writable. Each produces
+the same blank window and the same long wait.
+
+> **pubkit:** `login_preflight()` runs first, synchronously and cheaply. A
+> window is never opened when it cannot work, and each failure names its own
+> fix. It also says when a valid session already exists, so the user is not
+> signed out of something that was working.
+
+### E4. The flow stops at the identity provider
+Sign-in goes through Google or a corporate SSO hop, the redirect back never
+completes, and what gets saved is a session for `accounts.google.com` with no
+cookie for the platform at all.
+
+> **pubkit:** the saved state is checked for cookies on the platform's own
+> registrable domain, and for the specific cookie names that authorise writing.
+> Missing ones are named.
+
+### E5. A session that validates and does not work
+Both session cookies present, correct domain, good expiry — and the signed-in
+page still bounces back to sign-in. Cookie inspection cannot detect this; only
+asking the platform can.
+
+> **pubkit:** before anything is written, a page that renders only for a
+> signed-in user is fetched and checked for a signed-in marker. A session is
+> saved only once it has been *proven* to work. A saved session that does not
+> work is worse than none, because it moves the failure into the middle of a
+> publish.
+
+### E6. A session that expires quietly
+A session cookie with no persistent expiry dies with the browser; one with a
+two-day expiry dies mid-week. Either way the failure surfaces days later,
+inside a publish, looking like something else.
+
+> **pubkit:** expiry is reported at login time, and a lifetime under a week is
+> a warning with the number in it. `pubkit auth verify` re-runs the identical
+> checks on demand — same code path, so a session cannot pass one and fail the
+> other.

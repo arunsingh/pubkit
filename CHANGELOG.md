@@ -4,6 +4,47 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning is [semantic](https://semver.org/); adapters may change behaviour on
 a minor bump when a platform changes underneath them.
 
+## [0.3.0] — 2026-09-11
+
+Sign-in is the one step a human performs and a machine has to judge, and every
+way it fails is silent. This release makes each of them say something.
+
+### Added
+
+- **`login_preflight()`** — playwright, browser, host reachability, a writable
+  session store and any existing session are checked before a window opens.
+  A login that cannot work no longer costs five minutes to find out.
+- **Live observation during sign-in** — console errors, failed requests and
+  challenge-host scripts are recorded while the human works, and submissions to
+  the platform are counted. A button that never fires is now distinguishable
+  from a bot check that never completes; previously both were silence.
+- **Post-flight proof** — the saved state is checked for cookies on the
+  platform's own domain and for the cookie names that authorise writing, its
+  expiry is reported, and a signed-in page is fetched and checked. **A session
+  is written only after it has been shown to work.**
+- **`pubkit auth login <platform> --attach`** — watch a Chrome you started
+  yourself (`--remote-debugging-port=9222`) instead of launching one, for
+  platforms that will not complete a sign-in in a fresh profile.
+- **`pubkit auth login --minutes`** to set the wait.
+- **`core/login.py`** — one `LoginFlow` per platform declaring success markers,
+  required cookies, cookie domain, probe URL and signed-in markers. A new
+  platform inherits the whole validation suite rather than new special cases.
+- **`tests/fixtures/login_server.py`** — a sign-in page that fails the six ways
+  real ones do: dead button, blocked challenge, partial cookies, short-lived
+  session, ghost session, and the happy path. 26 tests cover the matrix; the
+  unit half needs no browser at all.
+- **Class E in `docs/FAILURE-MODES.md`** — six new entries.
+
+### Changed
+
+- A launched login window now uses a **persistent pubkit profile** and real
+  Google Chrome where it is installed, falling back to bundled Chromium.
+  pubkit does not try to disguise an automated browser; where a platform
+  declines one, `--attach` uses the browser you actually sign in with.
+- `pubkit auth verify` runs the identical post-flight checks as `login`, so a
+  session cannot pass one and fail the other, and prints each finding.
+- `BROWSER_PLATFORMS` derives from the login flow table — one source of truth.
+
 ## [0.2.0] — 2026-09-11
 
 The release that makes `pubkit publish --to medium --confirm` actually work

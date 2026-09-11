@@ -96,8 +96,41 @@ pubkit auth login medium
 ```
 
 A real browser window opens at Medium's login page. You sign in — password
-manager, MFA, device confirmation, whatever it asks for. pubkit watches for the
-post-login URL, saves the session encrypted, and closes the window.
+manager, MFA, device confirmation, whatever it asks for.
+
+Before that window opens, pubkit checks the things that would otherwise cost you
+five silent minutes: playwright, a browser, whether the login host is even
+reachable from here, whether the session store is writable, and whether you
+already have a working session. After you sign in, it checks the cookies are for
+the platform's own domain, that the ones which authorise writing are present,
+how long they last — and then fetches a page only a signed-in user can see.
+**The session is saved only once it has been proven to work.** A saved session
+that does not work is worse than none, because the failure moves into the middle
+of a publish.
+
+If the sign-in button does nothing at all — no error, no request, the single
+most confusing failure there is — pubkit says so, and says which of the two
+causes it was:
+
+```
+  ✗ timeout: no sign-in seen in 5 minutes
+  ! last URL: https://medium.com/m/signin
+  ✗ form submission: the page never sent a sign-in request
+      the button was not wired up, or a script it waits on never finished —
+      try: pubkit auth login medium --attach
+```
+
+`--attach` watches a Chrome you started yourself rather than launching one:
+
+```bash
+open -a "Google Chrome" --args --remote-debugging-port=9222
+pubkit auth login medium --attach
+```
+
+pubkit drives nothing about that sign-in; it watches a tab you are already in.
+It does not try to look like something it is not, and it does not attempt to
+defeat a bot check — where a platform declines an automated browser, `--attach`
+gets out of the way instead.
 
 From then on, unattended:
 
@@ -263,16 +296,16 @@ validate >> PubkitPublishOperator.expand_fanout(
 
 ## Status
 
-v0.2. The core, the checks, the planner, the state machine, the browser pool
-and the table renderer are covered by 49 tests, and the whole pipeline is
-exercised end-to-end against a real published series in
-`examples/inside-ai-infra/`. The browser adapters are additionally tested
-against a deliberately hostile fake editor — multiple content roots, images
-stripped from pasted HTML, figures landing above the caret, uploads that sit on
-a `blob:` URL — which is where two real bugs were caught before release.
+v0.3. The core, the checks, the planner, the state machine, the browser pool,
+the table renderer and the sign-in validator are covered by 68 tests, and the
+whole pipeline is exercised end-to-end against a real published series in
+`examples/inside-ai-infra/`. Two hostile fixtures carry most of the weight: an
+editor that strips images, splits content roots and lands figures above the
+caret, and a sign-in page that fails the six ways real ones do.
 
 Selectors remain the part most likely to need a patch when a platform ships a
-redesign, which is exactly why they are isolated in one dataclass per adapter.
+redesign, which is exactly why they are isolated in one dataclass per adapter —
+and login flows in one `LoginFlow` per platform.
 
 ## Docs
 

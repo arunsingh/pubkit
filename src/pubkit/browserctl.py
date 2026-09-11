@@ -23,21 +23,28 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Sequence
+import os
+from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
+from pathlib import Path
 
 from .core.auth import CredentialError, SessionStore
+from .core.login import (
+    FLOWS,
+    Finding,
+    Observation,
+    is_challenge_script,
+    looks_signed_in,
+    validate_probe,
+    validate_state,
+    worst,
+)
 
 log = logging.getLogger(__name__)
 
-#: (where to send the user, how to tell they made it)
-LOGIN_FLOWS: dict[str, tuple[str, str]] = {
-    "medium": ("https://medium.com/m/signin", "medium.com/me/"),
-    "substack": ("https://substack.com/sign-in", "substack.com/home"),
-}
-
-#: Platforms whose adapters need a page injected.
-BROWSER_PLATFORMS = set(LOGIN_FLOWS)
+#: Platforms whose adapters need a page injected. One source of truth: a
+#: platform has a browser login flow, therefore its adapter needs a page.
+BROWSER_PLATFORMS = set(FLOWS)
 
 
 def _uploader(page):
@@ -154,60 +161,330 @@ async def attached(adapters: Sequence, sessions: SessionStore, *, headless: bool
         yield list(adapters)
 
 
-async def interactive_login(platform: str, sessions: SessionStore, timeout: float = 300.0) -> None:
-    """Open a visible window, wait for the human, save the session."""
+# --------------------------------------------------------------------- login
+#
+# Three ways to get a window the human can sign in to, in the order they are
+# tried. The order is not arbitrary: it goes from "a browser we launched" to
+# "the browser you already use", because that is also the order of how likely a
+# platform is to let the sign-in finish.
+#
+#   1. real Google Chrome, driven by Playwright, with a persistent pubkit
+#      profile — a profile that accumulates history and cookies across runs
+#      rather than looking brand new every time
+#   2. the Chromium that ships with Playwright, same persistent profile
+#   3. --attach: connect to a Chrome the user started themselves. pubkit drives
+#      nothing about the sign-in; it watches a tab the user is already in.
+#
+# What pubkit will not do is pretend to be something it is not. If a platform
+# declines to complete a sign-in in a launched window, --attach is the answer,
+# because then it genuinely is the user's own browser.
+
+DEFAULT_CDP = "http://localhost:9222"
+
+
+def profile_dir(platform: str) -> Path:
+    # Overridable so tests never touch a real home directory.
+    root = Path(os.environ.get("PUBKIT_PROFILE_DIR", Path.home() / ".pubkit" / "profiles"))
+    d = root / platform
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+async def _open_login_context(pw, platform: str, *, attach: str | None, headless: bool = False):
+    """Return (context, close_fn, how). See the note above for the order."""
+    if attach:
+        browser = await pw.chromium.connect_over_cdp(attach)
+        if not browser.contexts:
+            raise CredentialError(
+                f"connected to {attach} but that Chrome has no window open. "
+                "Open a tab and try again."
+            )
+        ctx = browser.contexts[0]
+
+        async def close():
+            # Never close a browser we did not start — it is the user's.
+            await browser.close()
+
+        return ctx, close, f"attached to your Chrome at {attach}"
+
+    args = {
+        "user_data_dir": str(profile_dir(platform)),
+        "headless": headless,
+        "viewport": {"width": 1280, "height": 900},
+        # Drops the "controlled by automated software" infobar, which steals a
+        # strip of the window the user is trying to type in.
+        "ignore_default_args": ["--enable-automation"],
+    }
+    try:
+        ctx = await pw.chromium.launch_persistent_context(channel="chrome", **args)
+        how = "Google Chrome, pubkit profile"
+    except Exception:  # noqa: BLE001 - Chrome simply may not be installed
+        ctx = await pw.chromium.launch_persistent_context(**args)
+        how = "bundled Chromium, pubkit profile"
+
+    async def close():
+        await ctx.close()
+
+    return ctx, close, how
+
+
+def _watch(page, obs: Observation) -> None:
+    """Record everything that could explain a button that does nothing."""
+
+    def on_console(m):
+        if m.type in ("error", "warning"):
+            obs.console_errors.append(f"{m.type}: {m.text}")
+
+    def on_failed(r):
+        obs.failed_requests.append(f"{r.method} {r.url[:120]} :: {r.failure}")
+
+    def on_request(r):
+        if is_challenge_script(r.url):
+            obs.challenge_scripts.append(r.url)
+        # A sign-in is a POST (or a GraphQL call) to the platform's own host.
+        # Counting them is what separates "you did not finish" from "the button
+        # is dead", which are the same silence from outside.
+        if r.method in ("POST", "PUT") and r.resource_type in ("xhr", "fetch", "document"):
+            obs.submits += 1
+
+    page.on("console", on_console)
+    page.on("requestfailed", on_failed)
+    page.on("request", on_request)
+
+
+async def interactive_login(
+    platform: str,
+    sessions: SessionStore,
+    timeout: float = 300.0,
+    *,
+    attach: str | None = None,
+    headless: bool = False,
+    report: Callable[[str], None] = print,
+) -> list[Finding]:
+    """Open a window, wait for the human, prove the session, then save it.
+
+    Returns every finding from all three phases. The session is written only
+    after the post-flight probe passes: a saved session that does not work is
+    worse than none, because it defers the failure to the middle of a publish.
+    """
     from playwright.async_api import async_playwright
 
-    login_url, success_marker = LOGIN_FLOWS.get(
-        platform, (f"https://{platform}.com/login", f"{platform}.com")
-    )
+    flow = FLOWS.get(platform)
+    if flow is None:
+        raise CredentialError(
+            f"{platform} has no browser login flow. "
+            f"Known: {', '.join(sorted(FLOWS))}. API platforms use `pubkit auth login {platform}` "
+            "with a token instead."
+        )
+
+    findings: list[Finding] = []
+    obs = Observation()
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=False)
-        ctx = await browser.new_context(viewport={"width": 1280, "height": 900})
-        page = await ctx.new_page()
-        await page.goto(login_url)
+        ctx, close, how = await _open_login_context(pw, platform, attach=attach, headless=headless)
+        page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+        _watch(page, obs)
 
-        print(f"\n  A browser window is open at {login_url}")
-        print("  Sign in there — password manager, MFA, all of it.")
-        print(f"  Waiting up to {timeout / 60:.0f} minutes. Close this with Ctrl-C to cancel.\n")
+        try:
+            await page.goto(flow.login_url, wait_until="domcontentloaded")
+        except Exception as exc:  # noqa: BLE001
+            await close()
+            findings.append(
+                Finding(
+                    "reachable",
+                    "fail",
+                    f"could not open {flow.login_url}: {str(exc)[:120]}",
+                    "check your network, VPN or proxy",
+                )
+            )
+            return findings
+
+        report(f"\n  Window open ({how})")
+        report(f"  Sign in at {flow.login_url} — password manager, MFA, all of it.")
+        report("  pubkit never sees your password. It is watching for the session only.")
+        report(f"  Waiting up to {timeout / 60:.0f} minutes; Ctrl-C cancels.\n")
 
         deadline = asyncio.get_event_loop().time() + timeout
+        last_report = 0.0
+        state: dict | None = None
+
         while asyncio.get_event_loop().time() < deadline:
             try:
                 url = page.url
-            except Exception as exc:  # window closed by the user
-                await browser.close()
-                raise CredentialError(
-                    f"{platform} login window was closed before sign-in completed"
-                ) from exc
+                cookies = await ctx.cookies()
+            except Exception as exc:  # noqa: BLE001 - the user closed the window
+                await close()
+                findings.append(
+                    Finding(
+                        "window",
+                        "fail",
+                        "closed before the sign-in completed",
+                        str(exc)[:100],
+                    )
+                )
+                findings += obs.diagnose(flow)
+                return findings
 
-            if success_marker in url:
+            obs.note_url(url)
+            names = {c["name"] for c in cookies if flow.cookie_domain in c.get("domain", "")}
+
+            if looks_signed_in(flow, url, names):
                 await asyncio.sleep(2)  # let the last auth cookie land
-                sessions.save(platform, await ctx.storage_state())
-                await browser.close()
-                return
+                state = await ctx.storage_state()
+                break
+
+            # Silence for five minutes is its own bug report. Say what is being
+            # waited for, so the user can tell pubkit is watching the right thing.
+            now = asyncio.get_event_loop().time()
+            if now - last_report > 30:
+                last_report = now
+                have = ", ".join(sorted(names & set(flow.required_cookies))) or "none yet"
+                report(f"    … still waiting. at {url[:70]} · cookies: {have}")
+
             await asyncio.sleep(1.5)
 
-        await browser.close()
-        raise TimeoutError(
-            f"no {platform} sign-in detected within {timeout / 60:.0f} minutes. "
-            f"pubkit watches for a URL containing {success_marker!r}."
-        )
+        if state is None:
+            await close()
+            findings.append(
+                Finding("timeout", "fail", f"no sign-in seen in {timeout / 60:.0f} minutes")
+            )
+            findings += obs.diagnose(flow)
+            return findings
+
+        # --------------------------------------------------- post-flight
+        findings += validate_state(flow, state)
+        if worst(findings) == "fail":
+            await close()
+            findings.append(
+                Finding("saved", "fail", "nothing was written", "fix the above and sign in again")
+            )
+            return findings
+
+        probe_page = await ctx.new_page()
+        try:
+            resp = await probe_page.goto(flow.probe_url, wait_until="domcontentloaded")
+            await asyncio.sleep(1.5)
+            body = await probe_page.evaluate("() => document.body.innerText.slice(0, 4000)")
+            findings.append(
+                validate_probe(
+                    flow,
+                    final_url=probe_page.url,
+                    body_text=body,
+                    status=resp.status if resp else None,
+                )
+            )
+            state = await ctx.storage_state()
+        except Exception as exc:  # noqa: BLE001
+            findings.append(
+                Finding("probe", "fail", f"could not load {flow.probe_url}: {str(exc)[:100]}")
+            )
+        finally:
+            await probe_page.close()
+
+        if worst(findings) == "fail":
+            await close()
+            findings.append(Finding("saved", "fail", "nothing was written"))
+            return findings
+
+        sessions.save(platform, state)
+        findings.append(Finding("saved", "ok", f"{platform} session stored, encrypted at rest"))
+        await close()
+
+    return findings
 
 
 async def verify_session(platform: str, sessions: SessionStore, *, headless: bool = True) -> bool:
     """Is the saved session still good? Cheaper to find out now than mid-publish."""
-    _, success_marker = LOGIN_FLOWS.get(platform, ("", platform))
-    probe = {
-        "medium": "https://medium.com/me/stories/drafts",
-        "substack": "https://substack.com/home",
-    }.get(platform)
-    if probe is None or sessions.load(platform) is None:
-        return False
+    return worst(await verify_session_detail(platform, sessions, headless=headless)) != "fail"
+
+
+async def verify_session_detail(
+    platform: str, sessions: SessionStore, *, headless: bool = True
+) -> list[Finding]:
+    """The same three post-flight checks `login` runs, on a session already saved.
+
+    Same code path as login's own verification — a session cannot pass one and
+    fail the other, which is the property that makes `verify` worth trusting.
+    """
+    flow = FLOWS.get(platform)
+    if flow is None:
+        return [Finding("platform", "fail", f"{platform} has no browser login flow")]
+
+    state = sessions.load(platform)
+    if state is None:
+        return [
+            Finding("session", "fail", "none saved", f"pubkit auth login {platform}")
+        ]
+
+    findings = validate_state(flow, state)
+    if worst(findings) == "fail":
+        return findings
 
     async with BrowserPool(sessions, headless=headless) as pool:
         page, _ = await pool.page_for(platform)
-        await page.goto(probe, wait_until="domcontentloaded")
-        await asyncio.sleep(1.5)
-        return "signin" not in page.url and "sign-in" not in page.url
+        try:
+            resp = await page.goto(flow.probe_url, wait_until="domcontentloaded")
+            await asyncio.sleep(1.5)
+            body = await page.evaluate("() => document.body.innerText.slice(0, 4000)")
+            findings.append(
+                validate_probe(
+                    flow, final_url=page.url, body_text=body, status=resp.status if resp else None
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            findings.append(Finding("probe", "fail", f"{str(exc)[:120]}"))
+    return findings
+
+
+def login_preflight(platform: str, sessions: SessionStore, *, check_network: bool = True):
+    """Everything that can be known before a window opens.
+
+    Cheap, synchronous, and it runs every time: five minutes staring at a login
+    page is a bad way to find out playwright is not installed.
+    """
+    from .core.login import FLOWS, preflight
+    from .scaffold import diagnose
+
+    flow = FLOWS.get(platform)
+    if flow is None:
+        return [Finding("platform", "fail", f"{platform} has no browser login flow")]
+
+    findings = {f.label: f for f in diagnose()}
+    browser = findings.get("chromium")
+
+    reachable = None
+    if check_network:
+        reachable = _reachable(flow.login_url)
+
+    store_writable = True
+    try:
+        sessions.dir.mkdir(parents=True, exist_ok=True)
+        probe = sessions.dir / ".writable"
+        probe.write_text("")
+        probe.unlink()
+    except Exception:  # noqa: BLE001
+        store_writable = False
+
+    return preflight(
+        flow,
+        have_playwright=bool(findings.get("playwright") and findings["playwright"].ok),
+        browser_detail=browser.detail if browser and browser.ok else None,
+        existing_session=sessions.load(platform) if sessions.exists(platform) else None,
+        store_writable=store_writable,
+        reachable=reachable,
+    )
+
+
+def _reachable(url: str, timeout: float = 6.0) -> tuple[bool, str]:
+    """Is the login page even up from here?
+
+    A proxy, a VPN or a captive portal produces a blank window and a five-minute
+    wait. One HEAD request turns that into one line.
+    """
+    try:
+        import httpx
+
+        r = httpx.head(url, follow_redirects=True, timeout=timeout)
+        return True, f"HTTP {r.status_code}"
+    except Exception as exc:  # noqa: BLE001
+        return False, type(exc).__name__

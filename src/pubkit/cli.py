@@ -15,6 +15,7 @@ from rich.console import Console
 from rich.table import Table as RichTable
 
 from . import __version__
+from .browserctl import DEFAULT_CDP
 from .core.adapter import Context
 from .core.auth import SessionStore, TokenStore
 from .core.capabilities import plan as make_plan
@@ -253,12 +254,28 @@ def doctor():
 def auth_login(
     platform: str = typer.Argument(...),
     token: str = typer.Option(None, "--token", help="API platforms only. Prefer stdin."),
+    attach: str = typer.Option(
+        None,
+        "--attach",
+        help="Watch a Chrome you started yourself, instead of launching one. "
+        "Use this when a platform will not complete a sign-in in a fresh window. "
+        "Start Chrome with --remote-debugging-port=9222, then pass --attach (no value "
+        "needed) or an explicit endpoint.",
+        is_flag=False,
+        flag_value=DEFAULT_CDP,
+    ),
+    minutes: float = typer.Option(5.0, "--minutes", help="How long to wait for you."),
 ):
     """Authenticate.
 
     API platforms: paste a token (it goes to your OS keychain).
     Browser platforms: a real browser window opens and you sign in yourself —
     pubkit stores only the resulting session, never a password.
+
+    The session is written only after it has been proven to work: the cookies
+    are checked, then a signed-in page is fetched. A saved session that does
+    not work is worse than none, because the failure moves to the middle of a
+    publish.
     """
     from .browserctl import BROWSER_PLATFORMS
 
@@ -272,15 +289,41 @@ def auth_login(
         console.print(f"[green]stored {platform} token in the system keychain[/]")
         return
 
-    from .browserctl import interactive_login
+    from .browserctl import interactive_login, login_preflight
+    from .core.login import worst
+
+    sessions = SessionStore()
+
+    pre = login_preflight(platform, sessions)
+    for f in pre:
+        if f.level != "ok":
+            console.print(str(f))
+    if worst(pre) == "fail":
+        console.print("\n[red]not opening a window that cannot work.[/] Fix the above first.")
+        raise typer.Exit(1)
 
     try:
-        asyncio.run(interactive_login(platform, SessionStore()))
+        findings = asyncio.run(interactive_login(platform, sessions, timeout=minutes * 60, attach=attach))
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]{exc}[/]")
         raise typer.Exit(1) from exc
+
+    console.print()
+    for f in findings:
+        console.print(str(f))
+
+    if worst(findings) == "fail":
+        console.print(
+            f"\n[red]{platform}: nothing was saved.[/]\n"
+            f"If the sign-in button did nothing at all, the page is very likely "
+            f"refusing a freshly launched browser. Start Chrome yourself with\n"
+            f"  open -a 'Google Chrome' --args --remote-debugging-port=9222\n"
+            f"then:  pubkit auth login {platform} --attach"
+        )
+        raise typer.Exit(1)
+
     console.print(
-        f"[green]saved {platform} session (encrypted)[/]\n"
+        f"\n[green]saved {platform} session (encrypted)[/]\n"
         f"Verify any time with: pubkit auth verify {platform}"
     )
 
@@ -295,18 +338,25 @@ def auth_logout(platform: str = typer.Argument(...)):
 @auth_app.command("verify")
 def auth_verify(platform: str = typer.Argument(...)):
     """Check a saved session is still valid — cheaper now than mid-publish."""
-    from .browserctl import BROWSER_PLATFORMS, verify_session
+    from .browserctl import BROWSER_PLATFORMS
 
     if platform not in BROWSER_PLATFORMS:
         tok = TokenStore().get(platform) or TokenStore().get(platform, "bearer")
         console.print(f"[green]{platform}: token present[/]" if tok else f"[red]{platform}: no token[/]")
         raise typer.Exit(0 if tok else 1)
 
-    ok = asyncio.run(verify_session(platform, SessionStore()))
-    if ok:
-        console.print(f"[green]{platform}: session valid[/]")
-    else:
-        console.print(f"[red]{platform}: session missing or expired[/] — run `pubkit auth login {platform}`")
+    from .browserctl import verify_session_detail
+    from .core.login import worst
+
+    findings = asyncio.run(verify_session_detail(platform, SessionStore()))
+    for f in findings:
+        console.print(str(f))
+    ok = worst(findings) != "fail"
+    console.print(
+        f"[green]{platform}: session valid[/]"
+        if ok
+        else f"[red]{platform}: not usable[/] — run `pubkit auth login {platform}`"
+    )
     raise typer.Exit(0 if ok else 1)
 
 
